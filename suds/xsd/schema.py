@@ -34,6 +34,7 @@ from suds.xsd.deplist import DepList
 from suds.sax.element import Element
 from suds.sax import splitPrefix, Namespace
 from logging import getLogger
+from weakref import WeakValueDictionary
 
 log = getLogger(__name__)
 
@@ -157,6 +158,8 @@ class SchemaCollection:
         return '\n'.join(result)
 
 
+PROCESSED_SCHEMAS_BY_URL = WeakValueDictionary()
+
 class Schema:
     """
     The schema is an objectification of a <schema/> (xsd) definition.
@@ -201,6 +204,12 @@ class Schema:
         @param container: An optional container.
         @type container: L{SchemaCollection}
         """
+
+        # this is necessary because sometimes a schema that is being created imports
+        # another previously unprocessed schema, which in turn imports the first
+        # schema.
+        PROCESSED_SCHEMAS_BY_URL[baseurl] = self
+
         self.root = root
         self.id = objid(self)
         self.tns = self.mktns()
@@ -227,7 +236,7 @@ class Schema:
             log.debug('built:\n%s', self)
             self.dereference()
             log.debug('dereferenced:\n%s', self)
-                
+
     def mktns(self):
         """
         Make the schema's target namespace.
@@ -394,7 +403,14 @@ class Schema:
         @rtype: L{Schema}
         @note: This is only used by Import children.
         """
-        return Schema(root, baseurl, options)
+        # check if the schema url was processed before and return that instance instead of
+        # processing it again.
+        # don't try and refactor this to use setdefault, it will defeat the purpose which is
+        # to never run Schema.__init__ if it had already run
+        if PROCESSED_SCHEMAS_BY_URL.has_key(baseurl):
+            return PROCESSED_SCHEMAS_BY_URL[baseurl]
+        PROCESSED_SCHEMAS_BY_URL[baseurl] = Schema(root, baseurl, options)
+        return PROCESSED_SCHEMAS_BY_URL[baseurl]
 
     def str(self, indent=0):
         tab = '%*s'%(indent*3, '')
